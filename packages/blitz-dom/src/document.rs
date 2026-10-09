@@ -2153,6 +2153,23 @@ impl BaseDocument {
         self.stylist.device()
     }
 
+    /// The used value of `user-select` (CSS UI 4): `auto` takes `none` or `all` from the nearest
+    /// ancestor that sets a value, and is `text` otherwise. Nodes without styles (text) use their
+    /// parent's.
+    pub fn used_user_select(&self, node_id: NodeId) -> UserSelect {
+        let mut current = Some(node_id);
+        while let Some(node) = current.and_then(|id| self.get_node(id)) {
+            match node.primary_styles().map(|style| style.clone_user_select()) {
+                Some(UserSelect::Auto) | None => current = node.parent,
+                Some(value) if node.id == node_id => return value,
+                Some(UserSelect::None) => return UserSelect::None,
+                Some(UserSelect::All) => return UserSelect::All,
+                Some(_) => return UserSelect::Text,
+            }
+        }
+        UserSelect::Text
+    }
+
     pub fn get_cursor(&self) -> Option<CursorIcon> {
         // Prefer the precise hit node: `cursor` and `user-select` may be set on
         // a pseudo-element or resolved on an anonymous box, and text hits carry
@@ -2169,7 +2186,7 @@ impl BaseDocument {
         }
 
         let style = node.primary_styles()?;
-        let user_select = style.clone_user_select();
+        let user_select = self.used_user_select(node_id);
         let keyword = style.clone_cursor().keyword;
 
         // Return cursor from style if it is non-auto

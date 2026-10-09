@@ -222,26 +222,10 @@ pub(crate) fn handle_pointermove<F: FnMut(DomEvent)>(
         if dx.abs() > 2.0 || dy.abs() > 2.0 {
             match event.id {
                 BlitzPointerId::Mouse | BlitzPointerId::Pen => {
-                    if let Some(mousedown_node_id) = doc.mousedown_node_id {
-                        let node = &doc.nodes[mousedown_node_id];
-                        if let Some(style) = node.primary_styles() {
-                            let user_select = style.clone_user_select();
-                            if user_select == UserSelect::None {
-                                // Do nothing. Continue with rest of function
-                            } else if user_select == UserSelect::Auto {
-                                if let Some(parent) = node.parent {
-                                    let node = &doc.nodes[parent];
-                                    if let Some(style) = node.primary_styles() {
-                                        let user_select = style.clone_user_select();
-                                        if user_select == UserSelect::None {
-                                            // Do nothing. Continue with rest of function
-                                        } else {
-                                            doc.drag_mode = DragMode::Selecting;
-                                        }
-                                    }
-                                }
-                            }
-                        }
+                    if let Some(mousedown_node_id) = doc.mousedown_node_id
+                        && doc.used_user_select(mousedown_node_id) != UserSelect::None
+                    {
+                        doc.drag_mode = DragMode::Selecting;
                     }
                 }
                 BlitzPointerId::Finger(_) => {
@@ -499,7 +483,9 @@ pub(crate) fn handle_pointerdown(
         ClickTarget::Disabled => (),
         ClickTarget::SelectableText => {
             // Handle text selection for non-input elements
-            if let Some((inline_root_id, byte_offset)) = doc.find_text_position(x, y) {
+            if doc.used_user_select(actual_target) == UserSelect::None {
+                doc.clear_text_selection();
+            } else if let Some((inline_root_id, byte_offset)) = doc.find_text_position(x, y) {
                 doc.set_text_selection(inline_root_id, byte_offset, inline_root_id, byte_offset);
                 doc.shell_provider.request_redraw();
             } else {

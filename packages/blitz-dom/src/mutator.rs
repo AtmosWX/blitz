@@ -1354,6 +1354,7 @@ impl Drop for ViewportMut<'_> {
 mod test {
     use style::media_queries::MediaType;
     use style::servo_arc::Arc as ServoArc;
+    use style::values::computed::UserSelect;
     use style_dom::ElementState;
 
     use std::sync::{
@@ -1444,6 +1445,25 @@ mod test {
                 .values()
                 .all(|&owner| owner != form)
         );
+    }
+
+    #[test]
+    fn used_user_select_inherits_none_and_all_through_auto() {
+        let (mut document, body) = laid_out_document();
+        let ui = element(&mut document, body, "div", "user-select: none");
+        let label = element(&mut document, ui, "span", "");
+        let opted_in = element(&mut document, ui, "div", "user-select: text");
+        let nested = element(&mut document, opted_in, "span", "");
+        let all = element(&mut document, body, "div", "user-select: all");
+        let in_all = element(&mut document, all, "span", "");
+        let plain = element(&mut document, body, "div", "");
+        document.resolve(0.0);
+
+        assert_eq!(document.used_user_select(label), UserSelect::None);
+        assert_eq!(document.used_user_select(opted_in), UserSelect::Text);
+        assert_eq!(document.used_user_select(nested), UserSelect::Text);
+        assert_eq!(document.used_user_select(in_all), UserSelect::All);
+        assert_eq!(document.used_user_select(plain), UserSelect::Text);
     }
 
     #[test]
