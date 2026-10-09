@@ -513,7 +513,9 @@ impl BaseDocument {
 
         let mut result = Vec::new();
         for &child_id in &children[first_idx..=last_idx] {
-            let child = &self.nodes[child_id];
+            let Some(child) = self.nodes.get(child_id) else {
+                continue;
+            };
             if child.flags.is_inline_root() {
                 result.push(child_id);
             } else {
@@ -533,7 +535,9 @@ impl BaseDocument {
         };
 
         for &child_id in children.iter() {
-            let child = &self.nodes[child_id];
+            let Some(child) = self.nodes.get(child_id) else {
+                continue;
+            };
             if child.flags.is_inline_root() {
                 result.push(child_id);
             } else {
@@ -575,7 +579,9 @@ impl BaseDocument {
                 if until == Some(child_id) {
                     break;
                 }
-                let child = &self.nodes[child_id];
+                let Some(child) = self.nodes.get(child_id) else {
+                    continue;
+                };
                 if child.flags.is_inline_root() {
                     result.push(child_id);
                 } else {
