@@ -107,6 +107,20 @@ impl MutationWriter<'_> {
         self.state.stack.push(node_id);
     }
 
+    /// Removes `node_id` and frees it with all its descendants. Dioxus never refers to the element
+    /// ids of removed or replaced nodes again, so their mappings are cleared too; otherwise
+    /// detached subtrees would stay allocated for the life of the document.
+    fn drop_subtree(&mut self, node_id: NodeId) {
+        let state = &mut *self.state;
+        self.docm.remove_and_drop_node_with(node_id, &mut |dropped_node_id| {
+            if let Some(element_id) = state.element_id_mapping.remove(&dropped_node_id)
+                && state.node_id_mapping.get(element_id.0).copied().flatten() == Some(dropped_node_id)
+            {
+                state.node_id_mapping[element_id.0] = None;
+            }
+        });
+    }
+
     /// Find a child in the document by child index path
     fn load_child(&self, path: &[u8]) -> NodeId {
         let top_of_stack_node_id = *self.state.stack.last().unwrap();
@@ -174,6 +188,7 @@ impl WriteMutations for MutationWriter<'_> {
         trace!("replace_node_with id:{} m:{}", id.0, m);
         let (anchor_node_id, new_node_ids) = self.state.anchor_and_nodes(id, m);
         self.docm.replace_node_with(anchor_node_id, &new_node_ids);
+        self.drop_subtree(anchor_node_id);
     }
 
     fn replace_placeholder_with_nodes(&mut self, path: &'static [u8], m: usize) {
@@ -184,12 +199,13 @@ impl WriteMutations for MutationWriter<'_> {
         let new_node_ids = self.state.m_stack_nodes(m);
         let anchor_node_id = self.load_child(path);
         self.docm.replace_node_with(anchor_node_id, &new_node_ids);
+        self.drop_subtree(anchor_node_id);
     }
 
     fn remove_node(&mut self, id: ElementId) {
         trace!("remove_node id:{}", id.0);
         let node_id = self.state.element_to_node_id(id);
-        self.docm.remove_node(node_id);
+        self.drop_subtree(node_id);
     }
 
     fn push_root(&mut self, id: ElementId) {
