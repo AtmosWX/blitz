@@ -45,6 +45,9 @@ impl BaseDocument {
             return;
         }
 
+        // Changes made since the previous resolve are about to be processed.
+        self.changed_nodes.clear();
+
         // Process messages that have been sent to our message channel (e.g. loaded resource)
         self.handle_messages();
 

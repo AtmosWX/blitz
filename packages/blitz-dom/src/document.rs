@@ -997,7 +997,7 @@ impl BaseDocument {
 
     /// Whether the document has been mutated
     pub fn has_changes(&self) -> bool {
-        self.changed_nodes.is_empty()
+        !self.changed_nodes.is_empty()
     }
 
     pub fn create_text_node(&mut self, text: &str) -> NodeId {
