@@ -859,7 +859,13 @@ impl BaseDocument {
     /// it so that stale NodeIds are never dereferenced after the slot is freed.
     pub(crate) fn remove_node_from_tree(&mut self, node_id: NodeId) -> Option<Node> {
         self.clear_interaction_state_for_removed_node(node_id);
-        self.nodes.remove(node_id)
+        let node = self.nodes.remove(node_id)?;
+        self.controls_to_form.remove(&node_id);
+        if node.data.is_element_with_tag_name(&local_name!("form")) {
+            self.controls_to_form
+                .retain(|_, form_id| *form_id != node_id);
+        }
+        Some(node)
     }
 
     /// The nearest element ancestor of `node_id` that is still in the
@@ -2186,7 +2192,10 @@ impl BaseDocument {
                 return Some(CursorIcon::Pointer);
             }
 
-            maybe_node = node.layout_parent.get().map(|node_id| node.with(node_id));
+            maybe_node = node
+                .layout_parent
+                .get()
+                .and_then(|node_id| node.tree().get(node_id));
         }
 
         // Return text cursor for text nodes

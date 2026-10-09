@@ -1363,7 +1363,88 @@ mod test {
 
     use blitz_traits::shell::{ColorScheme, ShellProvider, Viewport};
 
-    use crate::{Attribute, BaseDocument, DocumentConfig, ElementData, NodeData, qual_name};
+    use markup5ever::{LocalName, QualName, ns};
+
+    use crate::{
+        Attribute, BaseDocument, DocumentConfig, ElementData, NodeData, NodeId, qual_name,
+    };
+
+    fn element(document: &mut BaseDocument, parent: NodeId, tag: &str, style: &str) -> NodeId {
+        let mut mutator = document.mutate();
+        let attrs = vec![Attribute {
+            name: qual_name!("style"),
+            value: style.into(),
+        }];
+        let id = mutator.create_element(qual_name(tag), attrs);
+        mutator.append_children(parent, &[id]);
+        id
+    }
+
+    fn qual_name(tag: &str) -> QualName {
+        QualName::new(None, ns!(html), LocalName::from(tag))
+    }
+
+    /// `<html><body>` laid out in a 200×200 viewport.
+    fn laid_out_document() -> (BaseDocument, NodeId) {
+        let mut document = BaseDocument::new(DocumentConfig {
+            viewport: Some(Viewport::new(200, 200, 1.0, ColorScheme::Light)),
+            ..Default::default()
+        });
+        let root = document.root_node().id;
+        let html = element(&mut document, root, "html", "");
+        let body = element(&mut document, html, "body", "margin: 0");
+        (document, body)
+    }
+
+    #[test]
+    // Between a mutation and the next resolve, layout state (`paint_children`, `layout_parent`)
+    // still names freed nodes. Event-time queries must not panic on them.
+    fn queries_before_resolve_tolerate_freed_layout_parents() {
+        let (mut document, body) = laid_out_document();
+        let old_parent = element(&mut document, body, "div", "height: 100px; cursor: pointer");
+        let moved = element(&mut document, old_parent, "div", "height: 50px");
+        let new_parent = element(&mut document, body, "div", "height: 100px");
+        document.resolve(0.0);
+
+        let mut mutator = document.mutate();
+        mutator.append_children(new_parent, &[moved]);
+        mutator.remove_and_drop_node(old_parent);
+        drop(mutator);
+
+        let node = document.get_node(moved).unwrap();
+        node.absolute_position(0.0, 0.0);
+        node.unrounded_absolute_position(0.0, 0.0);
+        node.inline_root_ancestor();
+        for y in (0..200).step_by(10) {
+            document.set_hover_to(10.0, y as f32);
+            document.get_cursor();
+        }
+    }
+
+    #[test]
+    fn freed_controls_and_forms_leave_the_form_owner_map() {
+        let (mut document, body) = laid_out_document();
+        let form = element(&mut document, body, "form", "");
+        let kept = element(&mut document, form, "input", "");
+        let freed = element(&mut document, form, "input", "");
+        assert_eq!(document.controls_to_form.get(&freed), Some(&form));
+
+        document.mutate().remove_and_drop_node(freed);
+        assert!(!document.controls_to_form.contains_key(&freed));
+        assert_eq!(document.controls_to_form.get(&kept), Some(&form));
+
+        let mut mutator = document.mutate();
+        mutator.remove_node(kept);
+        mutator.append_children(body, &[kept]);
+        mutator.remove_and_drop_node(form);
+        drop(mutator);
+        assert!(
+            document
+                .controls_to_form
+                .values()
+                .all(|&owner| owner != form)
+        );
+    }
 
     #[test]
     fn media_type_defaults_to_screen() {

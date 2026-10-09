@@ -561,8 +561,8 @@ pub(crate) fn handle_pointerup<F: FnMut(DomEvent)>(
     if doc.devtools().highlight_hover {
         let mut node = doc.get_node(target).unwrap();
         if event.button == MouseEventButton::Secondary {
-            if let Some(parent_id) = node.layout_parent.get() {
-                node = doc.get_node(parent_id).unwrap();
+            if let Some(parent) = node.layout_parent.get().and_then(|id| doc.get_node(id)) {
+                node = parent;
             }
         }
         doc.debug_log_node(node.id);
