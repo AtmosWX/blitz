@@ -1661,7 +1661,7 @@ impl Node {
                 return Some(node);
             }
             let id = node.layout_parent.get()?;
-            node = self.with(id);
+            node = self.tree().get(id)?;
         }
     }
 
@@ -1737,9 +1737,11 @@ impl Node {
         let x = x + self.final_layout().location.x - self.scroll_offset().x as f32;
         let y = y + self.final_layout().location.y - self.scroll_offset().y as f32;
 
-        // Recurse up the positioning hierarchy
+        // Recurse up the positioning hierarchy. The containing block can be stale (freed) between a
+        // mutation and the next resolve.
         self.containing_block()
-            .map(|i| self.with(i).absolute_position(x, y))
+            .and_then(|i| self.tree().get(i))
+            .map(|node| node.absolute_position(x, y))
             .unwrap_or(crate::util::Point { x, y })
     }
 
