@@ -1497,6 +1497,66 @@ mod test {
     }
 
     #[test]
+    // Dragging a scroller's thumb past the end of its range scrolls nothing else: the thumb
+    // belongs to that scroller, unlike a wheel, whose leftover delta chains to ancestors.
+    fn dragging_a_scrollbar_past_its_end_does_not_scroll_ancestors() {
+        use blitz_traits::events::{
+            BlitzPointerEvent, BlitzPointerId, MouseEventButton, MouseEventButtons, PointerCoords,
+            PointerDetails, UiEvent,
+        };
+        use taffy::AbsoluteAxis;
+
+        use crate::events::{DragMode, ScrollbarDragState};
+        use crate::node::ScrollbarRef;
+        use crate::{EventDriver, NoopEventHandler};
+
+        let (mut document, body) = laid_out_document();
+        let panel = element(
+            &mut document,
+            body,
+            "div",
+            "height: 100px; overflow-y: auto",
+        );
+        element(&mut document, panel, "div", "height: 1000px");
+        element(&mut document, body, "div", "height: 2000px");
+        document.resolve(0.0);
+        document.scroll_viewport_by(0.0, -300.0);
+        let page_scroll = document.viewport_scroll();
+        assert!(page_scroll.y > 0.0, "the page itself must scroll");
+
+        document.drag_mode = DragMode::ScrollbarDrag(ScrollbarDragState {
+            scrollbar: ScrollbarRef {
+                node_id: panel,
+                axis: AbsoluteAxis::Vertical,
+            },
+            last_pos: 50.0,
+        });
+        let mut driver = EventDriver::new(&mut document, NoopEventHandler);
+        for y in [60.0, 200.0, 600.0, 2000.0, -500.0, -2000.0] {
+            driver.handle_ui_event(UiEvent::PointerMove(BlitzPointerEvent {
+                id: BlitzPointerId::Mouse,
+                is_primary: true,
+                coords: PointerCoords {
+                    screen_x: 10.0,
+                    screen_y: y,
+                    client_x: 10.0,
+                    client_y: y,
+                    page_x: 10.0,
+                    page_y: y,
+                },
+                button: MouseEventButton::Main,
+                buttons: MouseEventButtons::Primary,
+                mods: Default::default(),
+                details: PointerDetails::default(),
+                element: Default::default(),
+                active_pointers: Default::default(),
+            }));
+        }
+        drop(driver);
+        assert_eq!(document.viewport_scroll(), page_scroll);
+    }
+
+    #[test]
     fn media_type_defaults_to_screen() {
         let mut document = BaseDocument::new(DocumentConfig::default());
         assert_eq!(*document.media_type(), MediaType::screen());

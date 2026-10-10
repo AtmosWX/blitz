@@ -430,6 +430,32 @@ impl BaseDocument {
         )
     }
 
+    /// Scrolls exactly `node_id` by a wheel-style delta (positive moves content down), discarding
+    /// what it can't consume. For scroll mechanisms that belong to one scroller, like dragging its
+    /// scrollbar thumb, which must never move an ancestor.
+    pub(crate) fn scroll_node_by_clamped(
+        &mut self,
+        node_id: NodeId,
+        scroll_x: f64,
+        scroll_y: f64,
+        dispatch_event: &mut dyn FnMut(DomEvent),
+    ) -> bool {
+        self.scroll(
+            ScrollRequest {
+                target: ScrollTarget::Node(node_id),
+                amount: ScrollAmount::By(Point {
+                    x: -scroll_x,
+                    y: -scroll_y,
+                }),
+                overflow: ScrollOverflow::Clamp,
+                source: ScrollSource::User,
+                behavior: ScrollBehavior::Instant,
+                interrupt_animation: true,
+            },
+            dispatch_event,
+        )
+    }
+
     /// Duration (in milliseconds) of an animated scroll.
     const SMOOTH_SCROLL_DURATION_MS: f64 = 300.0;
 

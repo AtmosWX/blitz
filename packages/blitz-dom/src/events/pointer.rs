@@ -276,8 +276,8 @@ pub(crate) fn handle_pointermove<F: FnMut(DomEvent)>(
             AbsoluteAxis::Horizontal => (-delta_px * ratio, 0.0),
             AbsoluteAxis::Vertical => (0.0, -delta_px * ratio),
         };
-        let has_changed = doc.scroll_chain_by(Some(node_id), dx, dy, &mut dispatch_event);
-        return has_changed;
+        // A scrollbar belongs to its scroller: dragging past the end must not scroll ancestors.
+        return doc.scroll_node_by_clamped(node_id, dx, dy, &mut dispatch_event);
     }
 
     let Some(hit) = doc.hit(x, y) else {
