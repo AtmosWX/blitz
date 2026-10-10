@@ -482,6 +482,15 @@ pub(crate) fn handle_pointerdown(
     match click_target {
         ClickTarget::Disabled => (),
         ClickTarget::SelectableText => {
+            // Pressing outside the focused element blurs it now, as browsers do, rather than
+            // on click: a selection drag never clicks, and would leave keyboard input (and
+            // copy) going to a field the user has moved away from.
+            if let Some(focused) = doc.focus_node_id
+                && !doc.is_inclusive_ancestor(focused, actual_target)
+            {
+                generate_focus_events(doc, &mut |doc| doc.clear_focus(), dispatch_event);
+            }
+
             // Handle text selection for non-input elements
             if doc.used_user_select(actual_target) == UserSelect::None {
                 doc.clear_text_selection();

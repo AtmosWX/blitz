@@ -592,6 +592,19 @@ impl BaseDocument {
         }
     }
 
+    /// Whether `node_id` is `ancestor_id` or inside it in the DOM. Missing nodes are inside
+    /// nothing.
+    pub(crate) fn is_inclusive_ancestor(&self, ancestor_id: NodeId, node_id: NodeId) -> bool {
+        let mut current = Some(node_id);
+        while let Some(node) = current.and_then(|id| self.get_node(id)) {
+            if node.id == ancestor_id {
+                return true;
+            }
+            current = node.parent;
+        }
+        false
+    }
+
     /// Check if `ancestor_id` is an ancestor of `descendant_id`
     fn is_ancestor_of(&self, ancestor_id: NodeId, descendant_id: NodeId) -> bool {
         let mut current = descendant_id;
