@@ -29,6 +29,7 @@ use style::shared_lock::SharedRwLock;
 use style::stylesheets::UrlExtraData;
 use style::values::computed::CSSPixelLength;
 use style::values::computed::Display as StyloDisplay;
+use style::values::computed::Overflow;
 use style::values::computed::Rotate;
 use style::values::generics::transform::{Scale, Translate};
 use style::values::specified::box_::{DisplayInside, DisplayOutside};
@@ -1460,11 +1461,23 @@ impl Node {
             y = (p.y / scale) as f32;
         }
 
+        // The point is in this node's scrolled content coordinates, where its own box starts at
+        // the scroll offset.
         let size = self.final_layout().size;
-        let matches_self = !(x < self.scroll_offset().x as f32
-            || x > size.width + self.scroll_offset().x as f32
-            || y < self.scroll_offset().y as f32
-            || y > size.height + self.scroll_offset().y as f32);
+        let scroll = self.scroll_offset();
+        let in_box_x = x >= scroll.x as f32 && x <= size.width + scroll.x as f32;
+        let in_box_y = y >= scroll.y as f32 && y <= size.height + scroll.y as f32;
+        let matches_self = in_box_x && in_box_y;
+
+        // A container that clips overflow shows (so can be hit through) only its box on that axis:
+        // content scrolled or overflowing past it is invisible.
+        let (clips_x, clips_y) = self.primary_styles().map_or((false, false), |style| {
+            (
+                style.clone_overflow_x() != Overflow::Visible,
+                style.clone_overflow_y() != Overflow::Visible,
+            )
+        });
+        let clipped_out = (clips_x && !in_box_x) || (clips_y && !in_box_y);
 
         let layout = self.final_layout();
         let overflow_rect = layout.scrollable_overflow_rect;
@@ -1572,6 +1585,10 @@ impl Node {
                 continue;
             };
             let child_position = child.taffy_position();
+            // Fixed boxes are positioned against the viewport and escape the clip.
+            if clipped_out && child_position != taffy::Position::Fixed {
+                continue;
+            }
             let mut child_x = x;
             let mut child_y = y;
             if child_position.is_out_of_flow() {
@@ -1610,7 +1627,7 @@ impl Node {
         }
 
         // Inline children
-        if self.flags.is_inline_root() {
+        if self.flags.is_inline_root() && !clipped_out {
             let x = x - content_box_offset.x;
             let y = y - content_box_offset.y;
             let element_data = &self.element_data().unwrap();
