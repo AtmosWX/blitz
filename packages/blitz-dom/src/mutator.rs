@@ -1467,6 +1467,36 @@ mod test {
     }
 
     #[test]
+    // Content scrolled out of a clipping container is invisible, so it must not take hits meant
+    // for whatever is visibly there.
+    fn hit_testing_ignores_content_scrolled_out_of_a_clipping_container() {
+        let (mut document, body) = laid_out_document();
+        let above = element(&mut document, body, "div", "height: 50px");
+        let list = element(
+            &mut document,
+            body,
+            "div",
+            "height: 100px; overflow-y: auto",
+        );
+        let rows: Vec<NodeId> = (0..10)
+            .map(|_| element(&mut document, list, "div", "height: 40px"))
+            .collect();
+        document.resolve(0.0);
+        // Body margin is 0: `above` covers y 0..50, the list 50..150.
+        assert_eq!(document.hit(10.0, 25.0).map(|hit| hit.node_id), Some(above));
+
+        // A content delta: moving content up 120px scrolls the list down.
+        document.scroll_node_by(list, 0.0, -120.0, |_| {});
+        document.resolve(0.0);
+        assert_eq!(document.hit(10.0, 25.0).map(|hit| hit.node_id), Some(above));
+        // Inside the list: content y 120 + (60 - 50) = 130 is the fourth row.
+        assert_eq!(
+            document.hit(10.0, 60.0).map(|hit| hit.node_id),
+            Some(rows[3])
+        );
+    }
+
+    #[test]
     fn media_type_defaults_to_screen() {
         let mut document = BaseDocument::new(DocumentConfig::default());
         assert_eq!(*document.media_type(), MediaType::screen());
