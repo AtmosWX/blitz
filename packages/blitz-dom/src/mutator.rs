@@ -1496,44 +1496,32 @@ mod test {
         );
     }
 
-    #[test]
-    // Dragging a scroller's thumb past the end of its range scrolls nothing else: the thumb
-    // belongs to that scroller, unlike a wheel, whose leftover delta chains to ancestors.
-    fn dragging_a_scrollbar_past_its_end_does_not_scroll_ancestors() {
-        use blitz_traits::events::{
-            BlitzPointerEvent, BlitzPointerId, MouseEventButton, MouseEventButtons, PointerCoords,
-            PointerDetails, UiEvent,
-        };
-        use taffy::AbsoluteAxis;
-
+    /// Grabs `panel`'s vertical thumb at page y `at`.
+    fn grab_scrollbar(document: &mut BaseDocument, panel: NodeId, at: f32) {
         use crate::events::{DragMode, ScrollbarDragState};
         use crate::node::ScrollbarRef;
-        use crate::{EventDriver, NoopEventHandler};
-
-        let (mut document, body) = laid_out_document();
-        let panel = element(
-            &mut document,
-            body,
-            "div",
-            "height: 100px; overflow-y: auto",
-        );
-        element(&mut document, panel, "div", "height: 1000px");
-        element(&mut document, body, "div", "height: 2000px");
-        document.resolve(0.0);
-        document.scroll_viewport_by(0.0, -300.0);
-        let page_scroll = document.viewport_scroll();
-        assert!(page_scroll.y > 0.0, "the page itself must scroll");
 
         document.drag_mode = DragMode::ScrollbarDrag(ScrollbarDragState {
             scrollbar: ScrollbarRef {
                 node_id: panel,
-                axis: AbsoluteAxis::Vertical,
+                axis: taffy::AbsoluteAxis::Vertical,
             },
-            last_pos: 50.0,
+            start_pos: at,
+            start_offset: document.scroll_offset_of(panel).y,
         });
-        let mut driver = EventDriver::new(&mut document, NoopEventHandler);
-        for y in [60.0, 200.0, 600.0, 2000.0, -500.0, -2000.0] {
-            driver.handle_ui_event(UiEvent::PointerMove(BlitzPointerEvent {
+    }
+
+    /// Moves the pointer to page y `y` with the primary button held.
+    fn drag_to(document: &mut BaseDocument, y: f32) {
+        use blitz_traits::events::{
+            BlitzPointerEvent, BlitzPointerId, MouseEventButton, MouseEventButtons, PointerCoords,
+            PointerDetails, UiEvent,
+        };
+
+        use crate::{EventDriver, NoopEventHandler};
+
+        EventDriver::new(document, NoopEventHandler).handle_ui_event(UiEvent::PointerMove(
+            BlitzPointerEvent {
                 id: BlitzPointerId::Mouse,
                 is_primary: true,
                 coords: PointerCoords {
@@ -1550,10 +1538,78 @@ mod test {
                 details: PointerDetails::default(),
                 element: Default::default(),
                 active_pointers: Default::default(),
-            }));
+            },
+        ));
+    }
+
+    /// A 100px-tall panel of 1000px content above 2000px of page.
+    fn scrollable_panel_on_scrollable_page() -> (BaseDocument, NodeId) {
+        let (mut document, body) = laid_out_document();
+        let panel = element(
+            &mut document,
+            body,
+            "div",
+            "height: 100px; overflow-y: auto",
+        );
+        element(&mut document, panel, "div", "height: 1000px");
+        element(&mut document, body, "div", "height: 2000px");
+        document.resolve(0.0);
+        (document, panel)
+    }
+
+    #[test]
+    // Dragging a scroller's thumb past the end of its range scrolls nothing else: the thumb
+    // belongs to that scroller, unlike a wheel, whose leftover delta chains to ancestors.
+    fn dragging_a_scrollbar_past_its_end_does_not_scroll_ancestors() {
+        let (mut document, panel) = scrollable_panel_on_scrollable_page();
+        document.scroll_viewport_by(0.0, -300.0);
+        let page_scroll = document.viewport_scroll();
+        assert!(page_scroll.y > 0.0, "the page itself must scroll");
+
+        grab_scrollbar(&mut document, panel, 50.0);
+        for y in [60.0, 600.0, 2000.0, -500.0, -2000.0] {
+            drag_to(&mut document, y);
+            assert_eq!(document.viewport_scroll(), page_scroll);
         }
-        drop(driver);
-        assert_eq!(document.viewport_scroll(), page_scroll);
+    }
+
+    #[test]
+    // Like native scrollbars: after overshooting an end, the thumb moves again only once the
+    // pointer is back where it held the thumb at that end.
+    fn a_thumb_follows_its_grab_point_after_overshooting_an_end() {
+        let (mut document, panel) = scrollable_panel_on_scrollable_page();
+        let ratio = document.nodes[panel].scrollbar_drag_ratio(taffy::AbsoluteAxis::Vertical);
+        let max = document
+            .scroll_state(crate::scrolling::ScrollTarget::Node(panel), false)
+            .1
+            .y;
+        // Pointer travel that takes the thumb from the top to the bottom.
+        let bottom = 10.0 + (max / ratio) as f32;
+
+        grab_scrollbar(&mut document, panel, 10.0);
+        drag_to(&mut document, bottom + 200.0);
+        assert_eq!(document.scroll_offset_of(panel).y, max);
+        drag_to(&mut document, bottom + 100.0);
+        assert_eq!(
+            document.scroll_offset_of(panel).y,
+            max,
+            "pinned while still past the end"
+        );
+        drag_to(&mut document, bottom - 20.0);
+        let expected = max - 20.0 * ratio;
+        assert!((document.scroll_offset_of(panel).y - expected).abs() < 0.5);
+
+        // And the same at the top.
+        drag_to(&mut document, 10.0 - 300.0);
+        assert_eq!(document.scroll_offset_of(panel).y, 0.0);
+        drag_to(&mut document, 10.0 - 100.0);
+        assert_eq!(
+            document.scroll_offset_of(panel).y,
+            0.0,
+            "pinned while still past the top"
+        );
+        drag_to(&mut document, 10.0 + 20.0);
+        assert!((document.scroll_offset_of(panel).y - 20.0 * ratio).abs() < 0.5);
     }
 
     #[test]

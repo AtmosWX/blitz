@@ -4,6 +4,7 @@
 use blitz_traits::events::{BlitzScrollEvent, DomEvent, DomEventData};
 use blitz_traits::node_id::NodeId;
 use style::values::computed::Overflow;
+use taffy::AbsoluteAxis;
 use web_time::{SystemTime, UNIX_EPOCH};
 
 use crate::BaseDocument;
@@ -430,23 +431,30 @@ impl BaseDocument {
         )
     }
 
-    /// Scrolls exactly `node_id` by a wheel-style delta (positive moves content down), discarding
-    /// what it can't consume. For scroll mechanisms that belong to one scroller, like dragging its
-    /// scrollbar thumb, which must never move an ancestor.
-    pub(crate) fn scroll_node_by_clamped(
+    /// A node's current scroll offset (the viewport's, for the root element).
+    pub(crate) fn scroll_offset_of(&self, node_id: NodeId) -> Point<f64> {
+        self.scroll_state(ScrollTarget::Node(node_id), false).0
+    }
+
+    /// Scrolls exactly `node_id` to `offset` along `axis`, clamped to its range. For scroll
+    /// mechanisms that belong to one scroller, like its scrollbar thumb, which must never move
+    /// an ancestor.
+    pub(crate) fn scroll_node_to_on_axis(
         &mut self,
         node_id: NodeId,
-        scroll_x: f64,
-        scroll_y: f64,
+        axis: AbsoluteAxis,
+        offset: f64,
         dispatch_event: &mut dyn FnMut(DomEvent),
     ) -> bool {
+        let mut to = self.scroll_offset_of(node_id);
+        match axis {
+            AbsoluteAxis::Horizontal => to.x = offset,
+            AbsoluteAxis::Vertical => to.y = offset,
+        }
         self.scroll(
             ScrollRequest {
                 target: ScrollTarget::Node(node_id),
-                amount: ScrollAmount::By(Point {
-                    x: -scroll_x,
-                    y: -scroll_y,
-                }),
+                amount: ScrollAmount::To(to),
                 overflow: ScrollOverflow::Clamp,
                 source: ScrollSource::User,
                 behavior: ScrollBehavior::Instant,

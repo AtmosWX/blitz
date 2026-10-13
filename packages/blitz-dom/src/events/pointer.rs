@@ -43,12 +43,17 @@ pub(crate) struct PanSample {
     pub(crate) dy: f32,
 }
 
+/// A thumb drag tracks the pointer from where it grabbed the thumb, like native scrollbars and
+/// browsers: the offset is always the starting offset plus the pointer's total travel, so after
+/// overshooting an end the thumb moves again only once the pointer is back at the grab point.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct ScrollbarDragState {
     /// The thumb being dragged
     pub(crate) scrollbar: ScrollbarRef,
-    /// Last pointer position along the drag axis, in page coordinates
-    pub(crate) last_pos: f32,
+    /// Pointer position along the drag axis when the drag began, in page coordinates
+    pub(crate) start_pos: f32,
+    /// The scroller's offset along the drag axis when the drag began
+    pub(crate) start_offset: f64,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -261,23 +266,18 @@ pub(crate) fn handle_pointermove<F: FnMut(DomEvent)>(
     }
 
     if let DragMode::ScrollbarDrag(state) = &mut doc.drag_mode {
+        let state = *state;
         let ScrollbarRef { node_id, axis } = state.scrollbar;
         let pos = match axis {
             AbsoluteAxis::Horizontal => x,
             AbsoluteAxis::Vertical => y,
         };
-        let delta_px = (pos - state.last_pos) as f64;
-        state.last_pos = pos;
-
-        // Thumb px -> content px. scroll_by uses wheel-delta semantics
-        // (positive delta decreases the offset), so negate.
+        // Thumb px -> content px.
         let ratio = doc.nodes[node_id].scrollbar_drag_ratio(axis);
-        let (dx, dy) = match axis {
-            AbsoluteAxis::Horizontal => (-delta_px * ratio, 0.0),
-            AbsoluteAxis::Vertical => (0.0, -delta_px * ratio),
-        };
-        // A scrollbar belongs to its scroller: dragging past the end must not scroll ancestors.
-        return doc.scroll_node_by_clamped(node_id, dx, dy, &mut dispatch_event);
+        let offset = state.start_offset + (pos - state.start_pos) as f64 * ratio;
+        // A scrollbar belongs to its scroller: past either end it clamps, never scrolling
+        // ancestors.
+        return doc.scroll_node_to_on_axis(node_id, axis, offset, &mut dispatch_event);
     }
 
     let Some(hit) = doc.hit(x, y) else {
@@ -407,12 +407,15 @@ pub(crate) fn handle_pointerdown(
         if let (_, Some(scrollbar)) = doc.hit_with_scrollbar(x, y)
             && doc.scrollbar_opacity(scrollbar.node_id) > 0.0
         {
+            let offset = doc.scroll_offset_of(scrollbar.node_id);
+            let (start_pos, start_offset) = match scrollbar.axis {
+                AbsoluteAxis::Horizontal => (x, offset.x),
+                AbsoluteAxis::Vertical => (y, offset.y),
+            };
             doc.drag_mode = DragMode::ScrollbarDrag(ScrollbarDragState {
                 scrollbar,
-                last_pos: match scrollbar.axis {
-                    AbsoluteAxis::Horizontal => x,
-                    AbsoluteAxis::Vertical => y,
-                },
+                start_pos,
+                start_offset,
             });
             doc.shell_provider.request_redraw();
             return;
