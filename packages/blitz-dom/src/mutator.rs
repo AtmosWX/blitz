@@ -1613,6 +1613,39 @@ mod test {
     }
 
     #[test]
+    // A box resized only because the window was (no damage of its own) must update its
+    // scrollable overflow: the stacking context's hit-test bounds are built from it, and
+    // stale bounds made the right side of a widened sticky header unclickable.
+    fn widening_the_window_widens_hit_areas() {
+        let (mut document, body) = laid_out_document();
+        let scroller = element(
+            &mut document,
+            body,
+            "div",
+            "height: 150px; overflow-y: auto",
+        );
+        let header = element(
+            &mut document,
+            scroller,
+            "div",
+            "position: sticky; top: 0; z-index: 1; height: 20px",
+        );
+        element(&mut document, scroller, "div", "height: 1000px");
+        document.resolve(0.0);
+        assert_eq!(
+            document.hit(150.0, 10.0).map(|hit| hit.node_id),
+            Some(header)
+        );
+
+        document.set_viewport(Viewport::new(600, 200, 1.0, ColorScheme::Light));
+        document.resolve(0.0);
+        assert_eq!(
+            document.hit(500.0, 10.0).map(|hit| hit.node_id),
+            Some(header)
+        );
+    }
+
+    #[test]
     fn media_type_defaults_to_screen() {
         let mut document = BaseDocument::new(DocumentConfig::default());
         assert_eq!(*document.media_type(), MediaType::screen());

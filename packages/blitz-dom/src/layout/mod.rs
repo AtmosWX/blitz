@@ -10,6 +10,7 @@ use markup5ever::{LocalName, local_name};
 use std::cell::Ref;
 use std::sync::Arc;
 use style::Atom;
+use style::selector_parser::RestyleDamage;
 use style::values::computed::CSSPixelLength;
 use style::values::computed::length_percentage::CalcLengthPercentage;
 use stylo_taffy::TaffyStyloStyle;
@@ -694,7 +695,25 @@ impl RoundTree for BaseDocument {
     }
 
     fn set_final_layout(&mut self, node_id: NodeId, layout: &Layout) {
-        *self.node_from_id_mut(node_id).final_layout_mut() = *layout;
+        let node = self.node_from_id_mut(node_id);
+        if node.final_layout() == layout {
+            return;
+        }
+        *node.final_layout_mut() = *layout;
+        // A box that moved or resized without damage of its own (e.g. a window resize, or a
+        // sibling growing) still changes its and its ancestors' scrollable overflow, which hit
+        // testing and hoisted-content bounds read.
+        let mut current = Some(dom_node_id(node_id));
+        while let Some(node) = current.and_then(|id| self.nodes.get_mut(id)) {
+            if node
+                .damage()
+                .is_some_and(|d| d.contains(RestyleDamage::RECALCULATE_OVERFLOW))
+            {
+                break;
+            }
+            node.insert_damage(RestyleDamage::RECALCULATE_OVERFLOW);
+            current = node.layout_parent.get();
+        }
     }
 
     fn is_out_of_flow(&self, node_id: NodeId) -> bool {
