@@ -72,6 +72,12 @@ pub enum UiEvent {
     Ime(BlitzImeEvent),
     AppleStandardKeybinding(SmolStr),
     Paste(String),
+    /// Something dragged from outside (files) entered the window or moved over it.
+    DragOver(BlitzDragEvent),
+    /// What was being dragged left the window, or the drag was cancelled.
+    DragLeave,
+    /// What was being dragged was dropped on the window.
+    Drop(BlitzDragEvent),
 }
 impl UiEvent {
     pub fn discriminant(&self) -> u8 {
@@ -144,6 +150,11 @@ pub enum DomEventKind {
     ContextMenu,
     DoubleClick,
 
+    DragEnter,
+    DragOver,
+    DragLeave,
+    Drop,
+
     KeyPress,
     KeyDown,
     KeyUp,
@@ -195,6 +206,11 @@ impl FromStr for DomEventKind {
             "contextmenu" => Ok(Self::ContextMenu),
             "dblclick" => Ok(Self::DoubleClick),
 
+            "dragenter" => Ok(Self::DragEnter),
+            "dragover" => Ok(Self::DragOver),
+            "dragleave" => Ok(Self::DragLeave),
+            "drop" => Ok(Self::Drop),
+
             "keypress" => Ok(Self::KeyPress),
             "keydown" => Ok(Self::KeyDown),
             "keyup" => Ok(Self::KeyUp),
@@ -241,6 +257,11 @@ pub enum DomEventData {
     Click(BlitzPointerEvent),
     ContextMenu(BlitzPointerEvent),
     DoubleClick(BlitzPointerEvent),
+
+    DragEnter(BlitzDragEvent),
+    DragOver(BlitzDragEvent),
+    DragLeave(BlitzDragEvent),
+    Drop(BlitzDragEvent),
 
     KeyPress(BlitzKeyEvent),
     KeyDown(BlitzKeyEvent),
@@ -297,6 +318,11 @@ impl DomEventData {
             Self::ContextMenu { .. } => "contextmenu",
             Self::DoubleClick { .. } => "dblclick",
 
+            Self::DragEnter { .. } => "dragenter",
+            Self::DragOver { .. } => "dragover",
+            Self::DragLeave { .. } => "dragleave",
+            Self::Drop { .. } => "drop",
+
             Self::KeyPress { .. } => "keypress",
             Self::KeyDown { .. } => "keydown",
             Self::KeyUp { .. } => "keyup",
@@ -342,6 +368,11 @@ impl DomEventData {
             Self::Click { .. } => DomEventKind::Click,
             Self::ContextMenu { .. } => DomEventKind::ContextMenu,
             Self::DoubleClick { .. } => DomEventKind::DoubleClick,
+
+            Self::DragEnter { .. } => DomEventKind::DragEnter,
+            Self::DragOver { .. } => DomEventKind::DragOver,
+            Self::DragLeave { .. } => DomEventKind::DragLeave,
+            Self::Drop { .. } => DomEventKind::Drop,
 
             Self::KeyPress { .. } => DomEventKind::KeyPress,
             Self::KeyDown { .. } => DomEventKind::KeyDown,
@@ -389,6 +420,12 @@ impl DomEventData {
             Self::ContextMenu { .. } => true,
             Self::DoubleClick { .. } => true,
 
+            // Cancelling `dragover` (or `dragenter`) is how a page accepts a drop there.
+            Self::DragEnter { .. } => true,
+            Self::DragOver { .. } => true,
+            Self::DragLeave { .. } => false,
+            Self::Drop { .. } => true,
+
             Self::KeyDown { .. } => true,
             Self::KeyUp { .. } => true,
             Self::KeyPress { .. } => true,
@@ -434,6 +471,11 @@ impl DomEventData {
             Self::Click { .. } => true,
             Self::ContextMenu { .. } => true,
             Self::DoubleClick { .. } => true,
+
+            Self::DragEnter { .. } => true,
+            Self::DragOver { .. } => true,
+            Self::DragLeave { .. } => true,
+            Self::Drop { .. } => true,
 
             Self::KeyDown { .. } => true,
             Self::KeyUp { .. } => true,
@@ -495,6 +537,16 @@ pub struct PointerDetails {
 pub struct Point<T> {
     pub x: T,
     pub y: T,
+}
+
+/// Something dragged over the window from outside it (files from Finder, say).
+#[derive(Clone, Debug)]
+pub struct BlitzDragEvent {
+    pub coords: PointerCoords,
+    pub mods: Modifiers,
+    /// The files being dragged. May be empty until the platform has supplied them (early in a
+    /// drag); a drop carries them.
+    pub paths: Arc<[std::path::PathBuf]>,
 }
 
 #[derive(Clone, Debug)]
