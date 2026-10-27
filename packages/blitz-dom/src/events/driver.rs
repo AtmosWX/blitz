@@ -1,7 +1,7 @@
 use crate::Document;
 use blitz_traits::events::{
-    BlitzPointerEvent, BlitzPointerId, DomEvent, DomEventData, EventState, Point, PointerCoords,
-    UiEvent,
+    BlitzDragEvent, BlitzPointerEvent, BlitzPointerId, DomEvent, DomEventData, EventState, Point,
+    PointerCoords, UiEvent,
 };
 use blitz_traits::node_id::NodeId;
 use std::collections::VecDeque;
@@ -146,6 +146,12 @@ impl<'doc, Handler: EventHandler> EventDriver<'doc, Handler> {
     }
 
     pub fn handle_ui_event(&mut self, event: UiEvent) {
+        match event {
+            UiEvent::DragOver(data) => return self.handle_drag_over(data),
+            UiEvent::DragLeave => return self.handle_drag_leave(),
+            UiEvent::Drop(data) => return self.handle_drop(data),
+            _ => {}
+        }
         let doc = self.doc.inner();
 
         let mut should_clear_hover = false;
@@ -195,6 +201,9 @@ impl<'doc, Handler: EventHandler> EventDriver<'doc, Handler> {
             UiEvent::KeyDown(_) => focussed_node_id,
             UiEvent::Ime(_) => focussed_node_id,
             UiEvent::AppleStandardKeybinding(_) => focussed_node_id,
+            UiEvent::DragOver(_) | UiEvent::DragLeave | UiEvent::Drop(_) => {
+                unreachable!("handled above")
+            }
         };
         // Fall back to the root element. A document without a root element (e.g. an
         // empty iframe sub-document) has no event target, so there is nothing to do.
@@ -260,11 +269,78 @@ impl<'doc, Handler: EventHandler> EventDriver<'doc, Handler> {
                 self.run_default_action(&mut dom_event);
                 self.process_queue();
             }
+            UiEvent::DragOver(_) | UiEvent::DragLeave | UiEvent::Drop(_) => {
+                unreachable!("handled above")
+            }
         };
 
         // Update document input state (hover, focus, active, etc)
         if should_clear_hover {
             self.doc.inner_mut().clear_hover();
+        }
+    }
+
+    /// The element a drag at `data`'s position is over (the root element over nothing).
+    fn drag_target(&self, data: &BlitzDragEvent) -> Option<NodeId> {
+        let doc = self.doc.inner();
+        let scroll = doc.viewport_scroll();
+        let (x, y) = (
+            data.coords.client_x + scroll.x as f32,
+            data.coords.client_y + scroll.y as f32,
+        );
+        doc.hit(x, y)
+            .map(|hit| hit.node_id)
+            .or_else(|| doc.try_root_element().map(|root| root.id))
+    }
+
+    /// A drag from outside moved (or entered the window): `dragleave` and `dragenter` where the
+    /// element under it changed, then `dragover` on it, whose cancellation accepts a drop.
+    fn handle_drag_over(&mut self, data: BlitzDragEvent) {
+        let Some(target) = self.drag_target(&data) else {
+            return;
+        };
+        let previous = self.doc.inner().drag_over.as_ref().map(|(node, _)| *node);
+        if previous != Some(target) {
+            let mut enter = DomEvent::new(target, DomEventData::DragEnter(data.clone()));
+            self.run_handler_event(&mut enter, EventState::default());
+            if let Some(previous) = previous {
+                let mut leave = DomEvent::new(previous, DomEventData::DragLeave(data.clone()));
+                self.run_handler_event(&mut leave, EventState::default());
+            }
+        }
+        let mut over = DomEvent::new(target, DomEventData::DragOver(data.clone()));
+        let state = self.run_handler_event(&mut over, EventState::default());
+        let mut doc = self.doc.inner_mut();
+        doc.drag_over = Some((target, data));
+        doc.drop_accepted = state.is_cancelled();
+        drop(doc);
+        self.process_queue();
+    }
+
+    /// The drag left the window or was cancelled: `dragleave` on the element it was over.
+    fn handle_drag_leave(&mut self) {
+        let mut doc = self.doc.inner_mut();
+        let last = doc.drag_over.take();
+        doc.drop_accepted = false;
+        drop(doc);
+        if let Some((node, data)) = last {
+            let mut leave = DomEvent::new(node, DomEventData::DragLeave(data));
+            self.run_handler_event(&mut leave, EventState::default());
+            self.process_queue();
+        }
+    }
+
+    /// The drag was dropped: `drop` on the element under it.
+    fn handle_drop(&mut self, data: BlitzDragEvent) {
+        let target = self.drag_target(&data);
+        let mut doc = self.doc.inner_mut();
+        doc.drag_over = None;
+        doc.drop_accepted = false;
+        drop(doc);
+        if let Some(target) = target {
+            let mut dropped = DomEvent::new(target, DomEventData::Drop(data));
+            self.run_handler_event(&mut dropped, EventState::default());
+            self.process_queue();
         }
     }
 

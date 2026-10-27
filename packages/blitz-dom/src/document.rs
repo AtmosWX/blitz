@@ -252,6 +252,11 @@ pub struct BaseDocument {
     /// This is never a layout-generated (anonymous) node, so it remains valid
     /// across box-tree reconstruction.
     pub(crate) hover_node_id: Option<NodeId>,
+    /// The element what's being dragged over the window from outside is over, and the last
+    /// event of that drag.
+    pub(crate) drag_over: Option<(NodeId, blitz_traits::events::BlitzDragEvent)>,
+    /// Whether the page accepts a drop where the drag is (its last `dragover` was cancelled).
+    pub(crate) drop_accepted: bool,
     /// The precise (may be anonymous) layout node under the pointer (if any).
     /// This can be invalidated by box-tree reconstruction, and is re-resolved against
     /// fresh layout at the end of every `resolve` pass.
@@ -461,6 +466,8 @@ impl BaseDocument {
             layout_ctx: parley::LayoutContext::new(),
 
             hover_node_id: None,
+            drag_over: None,
+            drop_accepted: false,
             hover_hit_node_id: None,
             hover_node_is_text: false,
             last_client_pointer_position: None,
@@ -1939,6 +1946,12 @@ impl BaseDocument {
 
     pub fn get_hover_node_id(&self) -> Option<NodeId> {
         self.hover_node_id
+    }
+
+    /// Whether the page accepts a drop where the current drag is: its last `dragover` event
+    /// was cancelled (`preventDefault`), as on the web.
+    pub fn drop_accepted(&self) -> bool {
+        self.drop_accepted
     }
 
     pub fn get_mousedown_node_id(&self) -> Option<NodeId> {

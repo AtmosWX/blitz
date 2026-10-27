@@ -333,6 +333,12 @@ impl EventHandler for DioxusEventHandler<'_> {
 
             // AppleStandardKeybinding events are not exposed to script
             DomEventData::AppleStandardKeybinding(_) => None,
+
+            // TODO: drag data for drags from outside the window
+            DomEventData::DragEnter(_)
+            | DomEventData::DragOver(_)
+            | DomEventData::DragLeave(_)
+            | DomEventData::Drop(_) => None,
         };
 
         let Some(event_data) = event_data else {

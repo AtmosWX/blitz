@@ -85,6 +85,11 @@ fn map_dom_event_to_ui_event(
         DomEventData::Click(_) => None,
         DomEventData::ContextMenu(_) => None,
         DomEventData::DoubleClick(_) => None,
+        // Drags from outside the window aren't forwarded into sub-documents.
+        DomEventData::DragEnter(_)
+        | DomEventData::DragOver(_)
+        | DomEventData::DragLeave(_)
+        | DomEventData::Drop(_) => None,
         DomEventData::Input(_) => None,
         DomEventData::Wheel(data) => Some(UiEvent::Wheel(data)),
         DomEventData::Scroll(_) => None,
@@ -242,6 +247,12 @@ pub(crate) fn handle_dom_event<F: FnMut(DomEvent)>(
             // TODO: Open context menu
         }
         DomEventData::DoubleClick(_) => {
+            // Do nothing (no default action)
+        }
+        DomEventData::DragEnter(_)
+        | DomEventData::DragOver(_)
+        | DomEventData::DragLeave(_)
+        | DomEventData::Drop(_) => {
             // Do nothing (no default action)
         }
         DomEventData::PointerEnter(_) => {
