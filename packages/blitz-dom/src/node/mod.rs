@@ -3,6 +3,7 @@
 mod attributes;
 #[cfg(feature = "custom-widget")]
 mod custom_widget;
+mod edit_history;
 mod element;
 mod node;
 pub(crate) mod scrollbar;

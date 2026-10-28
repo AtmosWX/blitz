@@ -6,6 +6,7 @@ use blitz_traits::{
 use keyboard_types::{Key, Modifiers};
 use parley::{ContentWidths, FontContext, LayoutContext};
 
+use super::edit_history::{EditHistory, EditKind, Snapshot};
 use crate::util::ACTION_MOD;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
@@ -68,6 +69,9 @@ pub struct TextInputData {
     /// vertical offset. It is kept up to date so that the caret remains visible within the
     /// input's content box.
     pub scroll_offset: f32,
+    /// Undo and redo: edits made by typing, deleting, cutting and pasting. Cleared when the text
+    /// is set from outside (`set_text`), as browsers do when script sets an input's value.
+    pub(crate) history: EditHistory,
 }
 
 // FIXME: Implement Clone for PlainEditor
@@ -84,6 +88,7 @@ impl TextInputData {
             editor,
             is_multiline,
             scroll_offset: 0.0,
+            history: EditHistory::default(),
         }
     }
 
@@ -94,6 +99,7 @@ impl TextInputData {
         text: &str,
     ) {
         if self.editor.text() != text {
+            self.history.clear();
             self.editor.set_text(text);
             self.editor.driver(font_ctx, layout_ctx).refresh_layout();
         }
@@ -195,7 +201,104 @@ impl TextInputData {
         delta - consumed
     }
 
+    /// Whether there's an edit to undo.
+    pub fn can_undo(&self) -> bool {
+        self.history.can_undo()
+    }
+
+    /// Whether there's an undone edit to redo.
+    pub fn can_redo(&self) -> bool {
+        self.history.can_redo()
+    }
+
+    /// Undoes the last edit, or redoes the last undone one. `None` if there's none (or while an
+    /// IME composition is in progress).
+    pub(crate) fn undo_or_redo(
+        &mut self,
+        font_ctx: &mut FontContext,
+        layout_ctx: &mut LayoutContext<TextBrush>,
+        redo: bool,
+    ) -> Option<GeneratedTextInputEvent> {
+        if self.editor.is_composing() {
+            return None;
+        }
+        let text = self.editor.raw_text();
+        let (text, selection) = match redo {
+            true => self.history.redo(text),
+            false => self.history.undo(text),
+        }?;
+        self.editor.set_text(&text);
+        self.editor
+            .driver(font_ctx, layout_ctx)
+            .set_selection(selection);
+        Some(GeneratedTextInputEvent::Input)
+    }
+
+    fn snapshot(&self) -> Snapshot {
+        Snapshot {
+            text: self.editor.raw_text().to_owned(),
+            selection: *self.editor.raw_selection(),
+        }
+    }
+
+    /// Records what an event did in the history: an edit of `kind` (from `before`) if it
+    /// changed the text, the end of a run of typing if it moved the caret.
+    fn record(
+        &mut self,
+        kind: EditKind,
+        before: Snapshot,
+        generated: Option<GeneratedTextInputEvent>,
+    ) -> Option<GeneratedTextInputEvent> {
+        match generated {
+            Some(GeneratedTextInputEvent::Input) => self.history.record(
+                kind,
+                before,
+                self.editor.raw_text(),
+                *self.editor.raw_selection(),
+            ),
+            Some(GeneratedTextInputEvent::Select) => self.history.close(),
+            _ => {}
+        }
+        generated
+    }
+
     pub(crate) fn apply_keypress_event(
+        &mut self,
+        font_ctx: &mut FontContext,
+        layout_ctx: &mut LayoutContext<TextBrush>,
+        shell_provider: &dyn ShellProvider,
+        event: BlitzKeyEvent,
+    ) -> Option<GeneratedTextInputEvent> {
+        if !event.state.is_pressed() {
+            return None;
+        }
+        // Undo: Cmd+Z (Ctrl+Z elsewhere). Redo: Shift+Cmd+Z (also Ctrl+Y elsewhere).
+        if let Key::Character(c) = &event.key
+            && event.modifiers.contains(ACTION_MOD)
+        {
+            let shift = event.modifiers.contains(Modifiers::SHIFT);
+            match c.to_lowercase().as_str() {
+                "z" => return self.undo_or_redo(font_ctx, layout_ctx, shift),
+                "y" if !cfg!(target_os = "macos") => {
+                    return self.undo_or_redo(font_ctx, layout_ctx, true);
+                }
+                _ => {}
+            }
+        }
+        let action_mod = event.modifiers.contains(ACTION_MOD);
+        let kind = match &event.key {
+            Key::Backspace => EditKind::DeleteBackward,
+            Key::Delete => EditKind::DeleteForward,
+            Key::Enter => EditKind::Typing,
+            Key::Character(_) if !action_mod => EditKind::Typing,
+            _ => EditKind::Other,
+        };
+        let before = self.snapshot();
+        let generated = self.keypress(font_ctx, layout_ctx, shell_provider, event);
+        self.record(kind, before, generated)
+    }
+
+    fn keypress(
         &mut self,
         font_ctx: &mut FontContext,
         layout_ctx: &mut LayoutContext<TextBrush>,
@@ -366,6 +469,41 @@ impl TextInputData {
     }
 
     pub(crate) fn apply_apple_standard_keybinding(
+        &mut self,
+        font_ctx: &mut FontContext,
+        layout_ctx: &mut LayoutContext<TextBrush>,
+        shell_provider: &dyn ShellProvider,
+        command: &str,
+    ) -> Option<GeneratedTextInputEvent> {
+        let kind = if command.starts_with("insert") {
+            EditKind::Typing
+        } else if command.starts_with("deleteBackward")
+            || matches!(
+                command,
+                "deleteWordBackward:"
+                    | "deleteToBeginningOfLine:"
+                    | "deleteToBeginningOfParagraph:"
+            )
+        {
+            EditKind::DeleteBackward
+        } else if matches!(
+            command,
+            "deleteForward:"
+                | "deleteWordForward:"
+                | "deleteToEndOfLine:"
+                | "deleteToEndOfParagraph:"
+        ) {
+            EditKind::DeleteForward
+        } else {
+            EditKind::Other
+        };
+        let before = self.snapshot();
+        let generated =
+            self.apple_standard_keybinding(font_ctx, layout_ctx, shell_provider, command);
+        self.record(kind, before, generated)
+    }
+
+    fn apple_standard_keybinding(
         &mut self,
         font_ctx: &mut FontContext,
         layout_ctx: &mut LayoutContext<TextBrush>,
@@ -762,6 +900,21 @@ impl TextInputData {
         layout_ctx: &mut LayoutContext<TextBrush>,
         event: BlitzImeEvent,
     ) -> Option<GeneratedTextInputEvent> {
+        // Only a commit edits for good; the composition before it is provisional text.
+        if !matches!(event, BlitzImeEvent::Commit(_)) {
+            return self.ime(font_ctx, layout_ctx, event);
+        }
+        let before = self.snapshot();
+        let generated = self.ime(font_ctx, layout_ctx, event);
+        self.record(EditKind::Typing, before, generated)
+    }
+
+    fn ime(
+        &mut self,
+        font_ctx: &mut FontContext,
+        layout_ctx: &mut LayoutContext<TextBrush>,
+        event: BlitzImeEvent,
+    ) -> Option<GeneratedTextInputEvent> {
         let editor = &mut self.editor;
         let mut driver = editor.driver(font_ctx, layout_ctx);
 
@@ -796,5 +949,108 @@ impl TextInputData {
                 None
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use blitz_traits::shell::DummyShellProvider;
+    use blitz_traits::events::KeyState;
+    use keyboard_types::{Code, Location};
+
+    struct Input {
+        data: TextInputData,
+        font_ctx: FontContext,
+        layout_ctx: LayoutContext<TextBrush>,
+    }
+
+    impl Input {
+        fn new() -> Self {
+            let mut input = Self {
+                data: TextInputData::new(false),
+                font_ctx: FontContext::new(),
+                layout_ctx: LayoutContext::new(),
+            };
+            input.data.editor.set_scale(1.0);
+            input
+                .data
+                .editor
+                .driver(&mut input.font_ctx, &mut input.layout_ctx)
+                .refresh_layout();
+            input
+        }
+
+        fn press(&mut self, key: Key, modifiers: Modifiers) {
+            let event = BlitzKeyEvent {
+                key,
+                code: Code::Unidentified,
+                modifiers,
+                location: Location::Standard,
+                is_auto_repeating: false,
+                is_composing: false,
+                state: KeyState::Pressed,
+                text: None,
+            };
+            self.data.apply_keypress_event(
+                &mut self.font_ctx,
+                &mut self.layout_ctx,
+                &DummyShellProvider,
+                event,
+            );
+        }
+
+        fn type_text(&mut self, text: &str) {
+            for c in text.chars() {
+                self.press(Key::Character(c.to_string().into()), Modifiers::empty());
+            }
+        }
+
+        fn undo(&mut self) {
+            self.press(Key::Character("z".into()), ACTION_MOD);
+        }
+
+        fn redo(&mut self) {
+            self.press(Key::Character("Z".into()), ACTION_MOD | Modifiers::SHIFT);
+        }
+
+        fn text(&self) -> &str {
+            self.data.editor.raw_text()
+        }
+    }
+
+    #[test]
+    fn undo_and_redo_typing_split_by_caret_moves() {
+        let mut input = Input::new();
+        input.type_text("ab");
+        input.press(Key::ArrowLeft, Modifiers::empty());
+        input.type_text("cd");
+        assert_eq!(input.text(), "acdb");
+
+        input.undo();
+        assert_eq!(input.text(), "ab");
+        assert_eq!(input.data.editor.raw_selection().focus().index(), 1);
+        input.undo();
+        assert_eq!(input.text(), "");
+        assert!(!input.data.can_undo());
+
+        input.redo();
+        input.redo();
+        assert_eq!(input.text(), "acdb");
+        assert!(!input.data.can_redo());
+    }
+
+    #[test]
+    fn setting_the_text_clears_the_history() {
+        let mut input = Input::new();
+        input.type_text("ab");
+        input
+            .data
+            .set_text(&mut input.font_ctx, &mut input.layout_ctx, "ab");
+        assert!(input.data.can_undo(), "the same text leaves the history alone");
+        input
+            .data
+            .set_text(&mut input.font_ctx, &mut input.layout_ctx, "xyz");
+        assert!(!input.data.can_undo());
     }
 }
