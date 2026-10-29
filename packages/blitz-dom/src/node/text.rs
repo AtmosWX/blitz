@@ -84,6 +84,16 @@ pub struct TextInputData {
     /// Undo and redo: edits made by typing, deleting, cutting and pasting. Cleared when the text
     /// is set from outside (`set_text`), as browsers do when script sets an input's value.
     pub(crate) history: EditHistory,
+    /// The `placeholder` attribute laid out in the `::placeholder` style, painted while the
+    /// input is empty.
+    pub placeholder: Option<Box<PlaceholderText>>,
+}
+
+/// An input's placeholder text and the colour it is painted in.
+#[derive(Clone)]
+pub struct PlaceholderText {
+    pub layout: parley::Layout<TextBrush>,
+    pub color: style::color::AbsoluteColor,
 }
 
 // FIXME: Implement Clone for PlainEditor
@@ -102,6 +112,7 @@ impl TextInputData {
             scroll_offset: 0.0,
             content_box_subpixel_offset: taffy::Point::ZERO,
             history: EditHistory::default(),
+            placeholder: None,
         }
     }
 

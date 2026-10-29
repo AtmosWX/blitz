@@ -1076,16 +1076,27 @@ impl ElementCx<'_, '_> {
                 };
             }
 
-            // Render text
+            // Render text, or the placeholder while the input is empty
             let mut draw_text_context = self.context.draw_text_context.borrow_mut();
+            let placeholder = input_data
+                .placeholder
+                .as_deref()
+                .filter(|_| input_data.editor.raw_text().is_empty());
+            let (lines, brush_override) = match placeholder {
+                Some(placeholder) => (
+                    placeholder.layout.lines(),
+                    Some(placeholder.color.as_srgb_color()),
+                ),
+                None => (input_data.editor.try_layout().unwrap().lines(), None),
+            };
             crate::text::stroke_text(
                 scene,
-                input_data.editor.try_layout().unwrap().lines(),
+                lines,
                 self.context.dom,
                 transform,
                 TextPaintOptions {
                     scale: self.scale,
-                    brush_override: None,
+                    brush_override,
                 },
                 self.node.id,
                 &mut draw_text_context,
