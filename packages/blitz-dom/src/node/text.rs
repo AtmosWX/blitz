@@ -898,6 +898,19 @@ impl TextInputData {
         None
     }
 
+    /// Inserts pasted text in place of the selection, as an undo step of its own.
+    pub(crate) fn apply_paste(
+        &mut self,
+        font_ctx: &mut FontContext,
+        layout_ctx: &mut LayoutContext<TextBrush>,
+        text: String,
+    ) -> Option<GeneratedTextInputEvent> {
+        let before = self.snapshot();
+        // Pasted text replaces the selection the way committed IME text does.
+        let generated = self.ime(font_ctx, layout_ctx, BlitzImeEvent::Commit(text));
+        self.record(EditKind::Other, before, generated)
+    }
+
     pub(crate) fn apply_ime_event(
         &mut self,
         font_ctx: &mut FontContext,
@@ -1043,6 +1056,20 @@ mod tests {
         input.redo();
         assert_eq!(input.text(), "acdb");
         assert!(!input.data.can_redo());
+    }
+
+    #[test]
+    fn a_paste_is_an_undo_step_of_its_own() {
+        let mut input = Input::new();
+        input.type_text("ab");
+        input
+            .data
+            .apply_paste(&mut input.font_ctx, &mut input.layout_ctx, "cd".into());
+        assert_eq!(input.text(), "abcd");
+        input.undo();
+        assert_eq!(input.text(), "ab");
+        input.undo();
+        assert_eq!(input.text(), "");
     }
 
     #[test]
