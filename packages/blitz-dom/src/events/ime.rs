@@ -29,3 +29,26 @@ pub(crate) fn handle_ime_event<F: FnMut(DomEvent)>(
         }
     }
 }
+
+/// Pastes `text` into the focused text input (clipboard text the shell fetched for it).
+pub(crate) fn handle_paste_event<F: FnMut(DomEvent)>(
+    doc: &mut BaseDocument,
+    text: String,
+    dispatch_event: F,
+) {
+    let Some(node_id) = doc.focus_node_id else {
+        return;
+    };
+    let Some(input_data) = doc.nodes[node_id]
+        .data
+        .downcast_element_mut()
+        .and_then(|el| el.text_input_data_mut())
+    else {
+        return;
+    };
+    let generated_event =
+        input_data.apply_paste(&mut doc.font_ctx.lock().unwrap(), &mut doc.layout_ctx, text);
+    if let Some(generated_event) = generated_event {
+        doc.apply_generated_text_input_event(node_id, generated_event, dispatch_event);
+    }
+}
