@@ -344,6 +344,11 @@ pub struct BaseDocument {
     pub(crate) drag_over: Option<(NodeId, blitz_traits::events::BlitzDragEvent)>,
     /// Whether the page accepts a drop where the drag is (its last `dragover` was cancelled).
     pub(crate) drop_accepted: bool,
+    /// A `draggable` element pressed with the main button and where (client coordinates): a drag
+    /// starts from it once the pointer moves far enough with the button still down.
+    pub(crate) drag_candidate: Option<(NodeId, [f32; 2])>,
+    /// The element a drag the page started is from, until it ends (`dragend`).
+    pub(crate) drag_source: Option<NodeId>,
     /// The precise (may be anonymous) layout node under the pointer (if any).
     /// This can be invalidated by box-tree reconstruction, and is re-resolved against
     /// fresh layout at the end of every `resolve` pass.
@@ -542,6 +547,8 @@ impl BaseDocument {
             hover_node_id: None,
             drag_over: None,
             drop_accepted: false,
+            drag_candidate: None,
+            drag_source: None,
             hover_hit_node_id: None,
             hover_node_is_text: false,
             last_client_pointer_position: None,
@@ -2093,6 +2100,24 @@ impl BaseDocument {
     /// was cancelled (`preventDefault`), as on the web.
     pub fn drop_accepted(&self) -> bool {
         self.drop_accepted
+    }
+
+    /// The element whose drag a press on `node_id` would start: the nearest with
+    /// `draggable="true"`, unless one nearer says `draggable="false"`.
+    pub(crate) fn draggable_ancestor(&self, node_id: NodeId) -> Option<NodeId> {
+        let mut node = self.get_node(node_id);
+        while let Some(current) = node {
+            if let Some(element) = current.element_data()
+                && let Some(attr) = element
+                    .attrs()
+                    .iter()
+                    .find(|attr| &*attr.name.local == "draggable")
+            {
+                return (&*attr.value == "true").then_some(current.id);
+            }
+            node = current.parent.and_then(|parent| self.get_node(parent));
+        }
+        None
     }
 
     pub fn get_mousedown_node_id(&self) -> Option<NodeId> {

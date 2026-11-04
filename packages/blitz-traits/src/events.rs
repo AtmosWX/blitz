@@ -78,6 +78,10 @@ pub enum UiEvent {
     DragLeave,
     /// What was being dragged was dropped on the window.
     Drop(BlitzDragEvent),
+    /// A drag the page started (`dragstart`) ended: dropped somewhere, or cancelled.
+    DragEnd {
+        dropped: bool,
+    },
 }
 impl UiEvent {
     pub fn discriminant(&self) -> u8 {
@@ -150,6 +154,8 @@ pub enum DomEventKind {
     ContextMenu,
     DoubleClick,
 
+    DragStart,
+    DragEnd,
     DragEnter,
     DragOver,
     DragLeave,
@@ -206,6 +212,8 @@ impl FromStr for DomEventKind {
             "contextmenu" => Ok(Self::ContextMenu),
             "dblclick" => Ok(Self::DoubleClick),
 
+            "dragstart" => Ok(Self::DragStart),
+            "dragend" => Ok(Self::DragEnd),
             "dragenter" => Ok(Self::DragEnter),
             "dragover" => Ok(Self::DragOver),
             "dragleave" => Ok(Self::DragLeave),
@@ -258,6 +266,8 @@ pub enum DomEventData {
     ContextMenu(BlitzPointerEvent),
     DoubleClick(BlitzPointerEvent),
 
+    DragStart(BlitzDragEvent),
+    DragEnd(BlitzDragEvent),
     DragEnter(BlitzDragEvent),
     DragOver(BlitzDragEvent),
     DragLeave(BlitzDragEvent),
@@ -318,6 +328,8 @@ impl DomEventData {
             Self::ContextMenu { .. } => "contextmenu",
             Self::DoubleClick { .. } => "dblclick",
 
+            Self::DragStart { .. } => "dragstart",
+            Self::DragEnd { .. } => "dragend",
             Self::DragEnter { .. } => "dragenter",
             Self::DragOver { .. } => "dragover",
             Self::DragLeave { .. } => "dragleave",
@@ -369,6 +381,8 @@ impl DomEventData {
             Self::ContextMenu { .. } => DomEventKind::ContextMenu,
             Self::DoubleClick { .. } => DomEventKind::DoubleClick,
 
+            Self::DragStart { .. } => DomEventKind::DragStart,
+            Self::DragEnd { .. } => DomEventKind::DragEnd,
             Self::DragEnter { .. } => DomEventKind::DragEnter,
             Self::DragOver { .. } => DomEventKind::DragOver,
             Self::DragLeave { .. } => DomEventKind::DragLeave,
@@ -420,7 +434,10 @@ impl DomEventData {
             Self::ContextMenu { .. } => true,
             Self::DoubleClick { .. } => true,
 
-            // Cancelling `dragover` (or `dragenter`) is how a page accepts a drop there.
+            // Cancelling `dragstart` stops the drag; cancelling `dragover` (or `dragenter`) is
+            // how a page accepts a drop there.
+            Self::DragStart { .. } => true,
+            Self::DragEnd { .. } => false,
             Self::DragEnter { .. } => true,
             Self::DragOver { .. } => true,
             Self::DragLeave { .. } => false,
@@ -472,6 +489,8 @@ impl DomEventData {
             Self::ContextMenu { .. } => true,
             Self::DoubleClick { .. } => true,
 
+            Self::DragStart { .. } => true,
+            Self::DragEnd { .. } => true,
             Self::DragEnter { .. } => true,
             Self::DragOver { .. } => true,
             Self::DragLeave { .. } => true,
@@ -539,14 +558,32 @@ pub struct Point<T> {
     pub y: T,
 }
 
-/// Something dragged over the window from outside it (files from Finder, say).
+/// A drag: one coming in over the window (files from Finder, text from another app, or the
+/// page's own), or one the page starts (`dragstart`).
 #[derive(Clone, Debug)]
 pub struct BlitzDragEvent {
     pub coords: PointerCoords,
     pub mods: Modifiers,
-    /// The files being dragged. May be empty until the platform has supplied them (early in a
-    /// drag); a drop carries them.
-    pub paths: Arc<[std::path::PathBuf]>,
+    /// What's dragged, shared by every event of the drag. Coming in, it may be empty until the
+    /// platform has supplied it (early in a drag); a drop carries it. Going out, `dragstart`'s
+    /// handlers fill it.
+    pub data: Arc<std::sync::Mutex<DragData>>,
+}
+
+/// The data a drag carries.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct DragData {
+    /// Files.
+    pub paths: Vec<std::path::PathBuf>,
+    /// Plain text.
+    pub text: Option<String>,
+}
+
+impl DragData {
+    /// Whether it carries nothing.
+    pub fn is_empty(&self) -> bool {
+        self.paths.is_empty() && self.text.is_none()
+    }
 }
 
 #[derive(Clone, Debug)]

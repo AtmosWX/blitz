@@ -25,6 +25,12 @@ pub trait ShellProvider: Send + Sync + 'static {
         let _ = width;
         let _ = height;
     }
+    /// Start dragging `data` out of the page (from a `dragstart` nobody cancelled). The
+    /// shell reports how it ended with `UiEvent::DragEnd`.
+    fn start_drag(&self, data: crate::events::DragData) {
+        let _ = data;
+    }
+
     /// Request clipboard text, delivered asynchronously to the document as a `UiEvent`.
     /// The text is applied to whichever text input is focused when it arrives.
     fn request_clipboard_text(&self) -> Result<(), ClipboardError> {

@@ -1,10 +1,11 @@
 use crate::Document;
 use blitz_traits::events::{
-    BlitzDragEvent, BlitzPointerEvent, BlitzPointerId, DomEvent, DomEventData, EventState, Point,
-    PointerCoords, UiEvent,
+    BlitzDragEvent, BlitzPointerEvent, BlitzPointerId, DomEvent, DomEventData, EventState,
+    MouseEventButton, MouseEventButtons, Point, PointerCoords, UiEvent,
 };
 use blitz_traits::node_id::NodeId;
 use std::collections::VecDeque;
+use std::sync::Arc;
 
 pub trait EventHandler {
     fn handle_event(
@@ -170,6 +171,8 @@ impl<'doc, Handler: EventHandler> EventDriver<'doc, Handler> {
             UiEvent::DragOver(data) => return self.handle_drag_over(data),
             UiEvent::DragLeave => return self.handle_drag_leave(),
             UiEvent::Drop(data) => return self.handle_drop(data),
+            UiEvent::DragEnd { dropped } => return self.handle_drag_end(dropped),
+            UiEvent::PointerMove(ref data) if self.start_drag(data) => return,
             _ => {}
         }
         let doc = self.doc.inner();
@@ -194,11 +197,17 @@ impl<'doc, Handler: EventHandler> EventDriver<'doc, Handler> {
                 let mut doc = self.doc.inner_mut();
                 doc.active_node();
                 doc.set_mousedown_node_id(hover_node_id);
+                doc.drag_candidate = (event.button == MouseEventButton::Main)
+                    .then_some(hover_node_id)
+                    .flatten()
+                    .and_then(|node| doc.draggable_ancestor(node))
+                    .map(|node| (node, [event.coords.client_x, event.coords.client_y]));
             }
             UiEvent::PointerUp(event) => {
                 hover_node_id = self.handle_pointer_move(event);
                 let mut doc = self.doc.inner_mut();
                 doc.unactive_node();
+                doc.drag_candidate = None;
 
                 if event.is_primary && matches!(event.id, BlitzPointerId::Finger(_)) {
                     hover_end_event = Some(event.clone());
@@ -232,7 +241,10 @@ impl<'doc, Handler: EventHandler> EventDriver<'doc, Handler> {
             UiEvent::Ime(_) => focussed_node_id,
             UiEvent::Paste(_) => focussed_node_id,
             UiEvent::AppleStandardKeybinding(_) => focussed_node_id,
-            UiEvent::DragOver(_) | UiEvent::DragLeave | UiEvent::Drop(_) => {
+            UiEvent::DragOver(_)
+            | UiEvent::DragLeave
+            | UiEvent::Drop(_)
+            | UiEvent::DragEnd { .. } => {
                 unreachable!("handled above")
             }
         };
@@ -308,7 +320,10 @@ impl<'doc, Handler: EventHandler> EventDriver<'doc, Handler> {
                 self.run_default_action(&mut dom_event);
                 self.process_queue();
             }
-            UiEvent::DragOver(_) | UiEvent::DragLeave | UiEvent::Drop(_) => {
+            UiEvent::DragOver(_)
+            | UiEvent::DragLeave
+            | UiEvent::Drop(_)
+            | UiEvent::DragEnd { .. } => {
                 unreachable!("handled above")
             }
         };
@@ -374,6 +389,68 @@ impl<'doc, Handler: EventHandler> EventDriver<'doc, Handler> {
             self.run_handler_event(&mut leave, EventState::default());
             self.process_queue();
         }
+    }
+
+    /// Starts a drag of the pressed `draggable` element once the pointer has moved far enough
+    /// with the main button down: `dragstart`, whose handlers fill the drag's data. Unless one
+    /// cancels it (or nothing was put in it), the shell takes the drag over. Returns whether it
+    /// did, which ends this pointer sequence for the page.
+    fn start_drag(&mut self, event: &BlitzPointerEvent) -> bool {
+        /// How far (CSS pixels) the pointer moves before a press becomes a drag.
+        const DRAG_THRESHOLD: f32 = 4.0;
+        let Some((node, [x, y])) = self.doc.inner().drag_candidate else {
+            return false;
+        };
+        if !event.buttons.contains(MouseEventButtons::Primary) {
+            self.doc.inner_mut().drag_candidate = None;
+            return false;
+        }
+        let moved = (event.coords.client_x - x).hypot(event.coords.client_y - y);
+        if moved < DRAG_THRESHOLD {
+            return false;
+        }
+        self.doc.inner_mut().drag_candidate = None;
+        let drag = BlitzDragEvent {
+            coords: event.coords,
+            mods: event.mods,
+            data: Arc::default(),
+        };
+        let mut start = DomEvent::new(node, DomEventData::DragStart(drag.clone()));
+        let state = self.run_handler_event(&mut start, EventState::default());
+        self.process_queue();
+        let data = drag.data.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        if state.is_cancelled() || data.is_empty() {
+            return false;
+        }
+        let mut doc = self.doc.inner_mut();
+        doc.drag_source = Some(node);
+        doc.unactive_node();
+        doc.shell_provider.start_drag(data);
+        true
+    }
+
+    /// A drag the page started ended: `dragend` on the element it started from.
+    fn handle_drag_end(&mut self, dropped: bool) {
+        let Some(source) = self.doc.inner_mut().drag_source.take() else {
+            return;
+        };
+        // How it ended isn't passed on yet (the web's `dropEffect`).
+        let _ = dropped;
+        let end = BlitzDragEvent {
+            coords: PointerCoords {
+                page_x: 0.0,
+                page_y: 0.0,
+                screen_x: 0.0,
+                screen_y: 0.0,
+                client_x: 0.0,
+                client_y: 0.0,
+            },
+            mods: Default::default(),
+            data: Arc::default(),
+        };
+        let mut event = DomEvent::new(source, DomEventData::DragEnd(end));
+        self.run_handler_event(&mut event, EventState::default());
+        self.process_queue();
     }
 
     /// The drag was dropped: `drop` on the element under it.

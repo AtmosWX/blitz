@@ -337,7 +337,9 @@ impl EventHandler for DioxusEventHandler<'_> {
             DomEventData::AppleStandardKeybinding(_) => None,
 
             // TODO: drag data for drags from outside the window
-            DomEventData::DragEnter(_)
+            DomEventData::DragStart(_)
+            | DomEventData::DragEnd(_)
+            | DomEventData::DragEnter(_)
             | DomEventData::DragOver(_)
             | DomEventData::DragLeave(_)
             | DomEventData::Drop(_) => None,
