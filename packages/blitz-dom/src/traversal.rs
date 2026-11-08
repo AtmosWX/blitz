@@ -4,6 +4,7 @@ use std::cmp::Ordering;
 use style::dom::TNode as _;
 
 use crate::{BaseDocument, Node};
+use markup5ever::local_name;
 
 macro_rules! iter_children {
     ($node_expr:expr, $cb:expr) => {{
@@ -588,6 +589,23 @@ impl BaseDocument {
 
     /// Whether `node_id` is `ancestor_id` or inside it in the DOM. Missing nodes are inside
     /// nothing.
+    /// The element pressing `node_id` focuses: the nearest inclusive ancestor that's focusable,
+    /// or has a `tabindex` (`-1` is focusable by the pointer, though Tab skips it).
+    pub(crate) fn click_focus_target(&self, node_id: NodeId) -> Option<NodeId> {
+        let mut current = Some(node_id);
+        while let Some(node) = current.and_then(|id| self.get_node(id)) {
+            if let Some(element) = node.element_data() {
+                let disabled = element.has_attr(local_name!("disabled"));
+                let has_tabindex = element.attr_parsed::<i32>(local_name!("tabindex")).is_some();
+                if node.is_focussable() || (has_tabindex && !disabled) {
+                    return Some(node.id);
+                }
+            }
+            current = node.parent;
+        }
+        None
+    }
+
     pub(crate) fn is_inclusive_ancestor(&self, ancestor_id: NodeId, node_id: NodeId) -> bool {
         let mut current = Some(node_id);
         while let Some(node) = current.and_then(|id| self.get_node(id)) {

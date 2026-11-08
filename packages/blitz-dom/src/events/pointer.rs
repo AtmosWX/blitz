@@ -486,10 +486,27 @@ pub(crate) fn handle_pointerdown(
     match click_target {
         ClickTarget::Disabled => (),
         ClickTarget::SelectableText => {
-            // Pressing outside the focused element blurs it now, as browsers do, rather than
-            // on click: a selection drag never clicks, and would leave keyboard input (and
-            // copy) going to a field the user has moved away from.
-            if let Some(focused) = doc.focus_node_id
+            // Pressing a focusable element (a button, a link, anything with `tabindex`) or
+            // inside one focuses it, as browsers do; pressing elsewhere outside the focused
+            // element blurs it. Both now rather than on click: a selection drag never clicks,
+            // and would leave keyboard input (and copy) going to a field the user has moved
+            // away from.
+            if let Some(focusable) = doc.click_focus_target(actual_target) {
+                generate_focus_events(
+                    doc,
+                    &mut |doc| {
+                        if doc.set_focus_to(focusable) {
+                            // Focused by the pointer: `:focus`, not `:focus-visible`.
+                            doc.snapshot_node_and(focusable, ElementState::FOCUSRING, |node| {
+                                if let Some(data) = node.element_data_mut() {
+                                    data.element_state.remove(ElementState::FOCUSRING);
+                                }
+                            });
+                        }
+                    },
+                    dispatch_event,
+                );
+            } else if let Some(focused) = doc.focus_node_id
                 && !doc.is_inclusive_ancestor(focused, actual_target)
             {
                 generate_focus_events(doc, &mut |doc| doc.clear_focus(), dispatch_event);
@@ -810,8 +827,9 @@ pub(crate) fn handle_click(
         false
     };
 
-    // If nothing is matched then clear focus
-    if !matched {
+    // If nothing is matched then clear focus, unless the click was in a focusable element
+    // (pressing it focused it)
+    if !matched && doc.click_focus_target(target).is_none() {
         generate_focus_events(doc, &mut |doc| doc.clear_focus(), dispatch_event);
     }
 
